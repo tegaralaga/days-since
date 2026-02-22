@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Days Since</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#111111">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+<style>
+:root{
+  --bg:#111;
+  --card:#1c1c1e;
+  --text:#fff;
+}
+.light{
+  --bg:#f2f2f7;
+  --card:#fff;
+  --text:#000;
+}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+  transition:.3s;
+}
+header{
+  padding:20px;
+  font-size:24px;
+  font-weight:600;
+  text-align:center;
+}
+.form{
+  text-align:center;
+  padding:10px;
+}
+input,button{
+  padding:8px;
+  margin:5px;
+  border-radius:8px;
+  border:none;
+}
+button{cursor:pointer;}
+.card{
+  background:var(--card);
+  margin:15px;
+  padding:15px;
+  border-radius:18px;
+  box-shadow:0 4px 15px rgba(0,0,0,.3);
+}
+.counter{
+  font-size:22px;
+  margin:12px 0;
+  font-weight:500;
+}
+.tabs button{
+  font-size:12px;
+  background:#333;
+  color:white;
+}
+.active{background:#007aff !important;}
+.small{font-size:12px;opacity:.7;}
+</style>
+</head>
+<body>
+
+<header>
+  Days Since
+  <button onclick="toggleTheme()">🌓</button>
+</header>
+
+<div class="form">
+  <input id="name" placeholder="Name">
+  <input type="date" id="date">
+  <input type="time" id="time" value="00:00">
+  <input type="color" id="color" value="#007aff">
+  <button onclick="addCounter()">Add</button>
+</div>
+
+<div id="counters"></div>
+
+<hr>
+<h2 style="text-align:center">Statistics</h2>
+<canvas id="statsChart" height="100"></canvas>
+
+<div style="text-align:center;margin:20px;">
+  <button onclick="exportData()">Export Backup</button>
+  <input type="file" onchange="importData(event)">
+</div>
+
+<script>
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js');
+}
+
+let counters = JSON.parse(localStorage.getItem("counters")) || [];
+let chart;
+
+function save(){
+  localStorage.setItem("counters", JSON.stringify(counters));
+}
+
+function toggleTheme(){
+  document.body.classList.toggle("light");
+}
+
+function addCounter(){
+  const name=document.getElementById("name").value;
+  const date=document.getElementById("date").value;
+  const time=document.getElementById("time").value;
+  const color=document.getElementById("color").value;
+
+  if(!name||!date||!time) return alert("Fill all fields");
+
+  counters.push({
+    id:Date.now(),
+    name,
+    start:new Date(date+"T"+time).getTime(),
+    color,
+    tab:"days",
+    resets:[]
+  });
+
+  save();
+  render();
+}
+
+function deleteCounter(id){
+  counters=counters.filter(c=>c.id!==id);
+  save();
+  render();
+}
+
+function resetCounter(id){
+  const c=counters.find(x=>x.id===id);
+  c.resets.push(c.start);
+  c.start=Date.now();
+  save();
+  celebrate();
+}
+
+function changeTab(id,tab){
+  const c=counters.find(x=>x.id===id);
+  c.tab=tab;
+  save();
+  render();
+}
+
+function diffParts(start){
+  const now=new Date();
+  const startDate=new Date(start);
+  const diff=Date.now()-start;
+
+  let years=now.getFullYear()-startDate.getFullYear();
+  let months=now.getMonth()-startDate.getMonth();
+  let days=now.getDate()-startDate.getDate();
+
+  if(days<0){
+    months--;
+    days+=new Date(now.getFullYear(),now.getMonth(),0).getDate();
+  }
+  if(months<0){
+    years--;
+    months+=12;
+  }
+
+  return {
+    years,
+    months,
+    days,
+    totalDays:Math.floor(diff/86400000),
+    hours:Math.floor(diff/3600000)%24,
+    minutes:Math.floor(diff/60000)%60,
+    seconds:Math.floor(diff/1000)%60,
+    weeks:Math.floor(diff/86400000/7),
+    daysLeft:Math.floor(diff/86400000)%7
+  };
+}
+
+function format(c){
+  const p=diffParts(c.start);
+  switch(c.tab){
+    case "hours": return `${Math.floor((Date.now()-c.start)/3600000)}h ${p.minutes}m ${p.seconds}s`;
+    case "days": return `${p.totalDays}d ${p.hours}h ${p.minutes}m ${p.seconds}s`;
+    case "weeks": return `${p.weeks}w ${p.daysLeft}d ${p.hours}h ${p.minutes}m`;
+    case "months": return `${p.years*12+p.months}m ${p.days}d ${p.hours}h`;
+    case "years": return `${p.years}y ${p.months}m ${p.days}d`;
+  }
+}
+
+function render(){
+  const container=document.getElementById("counters");
+  container.innerHTML="";
+
+  counters.forEach(c=>{
+    container.innerHTML+=`
+    <div class="card" style="border-left:6px solid ${c.color}">
+      <h3>${c.name}</h3>
+
+      <div class="tabs">
+        ${["hours","days","weeks","months","years"].map(t=>`
+          <button class="${c.tab===t?"active":""}"
+          onclick="changeTab(${c.id},'${t}')">${t}</button>
+        `).join("")}
+      </div>
+
+      <div class="counter" id="counter-${c.id}">
+        ${format(c)}
+      </div>
+
+      <div class="small">
+        Resets: ${c.resets.length}
+        <button onclick="toggleHistory(${c.id})">History</button>
+      </div>
+
+      <div id="history-${c.id}" style="display:none;font-size:12px;">
+        ${c.resets.map(r=>`<div>${new Date(r).toLocaleString()}</div>`).join("")}
+      </div>
+
+      <button onclick="resetCounter(${c.id})">Reset</button>
+      <button onclick="deleteCounter(${c.id})">Delete</button>
+    </div>
+    `;
+  });
+
+  updateStats();
+}
+
+function updateLiveCounters(){
+  counters.forEach(c=>{
+    const el=document.getElementById("counter-"+c.id);
+    if(el){
+      el.textContent=format(c);
+    }
+  });
+}
+
+function toggleHistory(id){
+  const el=document.getElementById("history-"+id);
+  el.style.display=el.style.display==="none"?"block":"none";
+}
+
+function updateStats(){
+  const labels=counters.map(c=>c.name);
+  const data=counters.map(c=>Math.floor((Date.now()-c.start)/86400000));
+  const ctx=document.getElementById("statsChart");
+
+  if(chart) chart.destroy();
+
+  chart=new Chart(ctx,{
+    type:"bar",
+    data:{
+      labels,
+      datasets:[{
+        data,
+        backgroundColor:counters.map(c=>c.color)
+      }]
+    },
+    options:{plugins:{legend:{display:false}}}
+  });
+}
+
+function exportData(){
+  const blob=new Blob([JSON.stringify(counters)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="backup.json";
+  a.click();
+}
+
+function importData(e){
+  const file=e.target.files[0];
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    counters=JSON.parse(reader.result);
+    save();
+    render();
+  };
+  reader.readAsText(file);
+}
+
+function celebrate(){
+  confetti({particleCount:150,spread:70,origin:{y:0.6}});
+}
+
+render();
+setInterval(updateLiveCounters,1000);
+</script>
+
+</body>
+</html>
